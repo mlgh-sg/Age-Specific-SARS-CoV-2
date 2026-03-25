@@ -5,6 +5,7 @@ library(posterior)
 library(bayesplot)
 library(ggplot2)
 library(patchwork)
+library(reshape2)
 library(multipanelfigure)
 library(tidyr)
 library(grid)
@@ -479,7 +480,7 @@ HospUp_NB1 = apply(HospUp_NB, 1, sum)
 Neg_Binomial_hosp_mat <- as_draws_matrix(Neg_Binomial_hosp)
 
 # Choose age group
-Age <- 1
+Age <- 7
 cols_age <- ((Age - 1) * N + 1):(Age * N)  # columns corresponding to this age
 
 # --- Extract posterior predictive draws ---
@@ -508,13 +509,47 @@ cat("Hospitalizations - variance: observed =", obs_var_hosps,
     ", predictive =", pred_var_hosps, 
     ", Bayesian p-value =", bayes_p_var_hosps, "\n")
 
+###
+Neg_Binomial_case_mat <- as_draws_matrix(Neg_Binomial_case)
+
+# Choose age group
+Age <- 7
+cols_age <- ((Age - 1) * N + 1):(Age * N)
+
+# --- Extract posterior predictive draws ---
+rep_cases_age <- Neg_Binomial_case_mat[, cols_age]  # S x N
+
+# --- Observed data ---
+obs_cases_age <- casesByAge[1:N, Age]
+
+# --- Predictive mean checks ---
+obs_mean_cases <- mean(obs_cases_age)
+rep_means_cases <- rowMeans(rep_cases_age)
+pred_mean_cases <- mean(rep_means_cases)
+bayes_p_mean_cases <- mean(rep_means_cases >= obs_mean_cases)
+
+# --- Predictive variance checks ---
+obs_var_cases <- var(obs_cases_age)
+rep_vars_cases <- apply(rep_cases_age, 1, var)
+pred_var_cases <- mean(rep_vars_cases)
+bayes_p_var_cases <- mean(rep_vars_cases >= obs_var_cases)
+
+# --- Print results ---
+cat("Cases - mean: observed =", obs_mean_cases, 
+    ", predictive =", pred_mean_cases, 
+    ", Bayesian p-value =", bayes_p_mean_cases, "\n")
+
+cat("Cases - variance: observed =", obs_var_cases, 
+    ", predictive =", pred_var_cases, 
+    ", Bayesian p-value =", bayes_p_var_cases, "\n")
+
 ###############################
 ### Plot of Case fit
 time_series_data1_case <- expand.grid(
   time = seq(as.Date("2021-07-07"), by = "days", length.out = N)
 )
 
-Age = 1
+Age = 4
 # Plot of Age-specific case fit
 time_series_data1_case$values <- as.vector(CaseByAge[c(2,2:N),Age])
 time_series_data1_case$lower <- as.vector(CaseDown[1:N,Age])
@@ -971,3 +1006,155 @@ p <- ggplot(data_long, aes(x = Category, y = Value, fill = Bar_Type)) +
     legend.text = element_text(size = 18, face = "bold", color = "black")  # Customize legend text size and color
   )
 print(p)
+
+###############################
+### Plot of estimated sources of SARS-CoV-2 infections and cases, Singapore average 2021-2023
+# Example Infection and Case Data (based on your previous structure)
+SumInfe = rep(0, A)
+LOWERCI_Infe = rep(0, A)
+UPPERCI_Infe = rep(0, A)
+
+SumCase = rep(0, A)
+LOWERCI_Case = rep(0, A)
+UPPERCI_Case = rep(0, A)
+
+# Infection data
+#SumInfe = apply(InfeByAge[(Seed+TVaccine+1):dim(InfeByAge)[1],], 2, mean)
+#SdInfe = apply(InfeByAge[(Seed+TVaccine+1):dim(InfeByAge)[1],], 2, sd)
+SumInfe = apply(InfeByAge[(Seed+1):(Seed+TVaccine),], 2, mean)
+SdInfe = apply(InfeByAge[(Seed+1):(Seed+TVaccine),], 2, sd)
+
+for (a in 1:A) {
+  UPPERCI_Infe[a] = SumInfe[a] + 1.96 * SdInfe[a] / sqrt(dim(InfeByAge[(Seed+1):(Seed+TVaccine),])[1])
+  LOWERCI_Infe[a] = SumInfe[a] - 1.96 * SdInfe[a] / sqrt(dim(InfeByAge[(Seed+1):(Seed+TVaccine),])[1])
+}
+
+# Case data
+#SumCase = apply(CasesByAge[(TVaccine+1):dim(CasesByAge)[1],], 2, mean)
+#SdCase = apply(CasesByAge[(TVaccine+1):dim(CasesByAge)[1],], 2, sd)
+SumCase = apply(CasesByAge[1:TVaccine,], 2, mean)
+SdCase = apply(CasesByAge[1:TVaccine,], 2, sd)
+
+for (a in 1:A) {
+  UPPERCI_Case[a] = SumCase[a] + 1.96 * SdCase[a] / sqrt(dim(CasesByAge[1:(TVaccine),])[1])
+  LOWERCI_Case[a] = SumCase[a] - 1.96 * SdCase[a] / sqrt(dim(CasesByAge[1:(TVaccine),])[1])
+}
+
+# Combined data for the plot
+data <- data.frame(
+  Category = c("0-14", "15-29", "30-39", "40-49", "50-59", "60-69", "70+"),
+  Infection_Contribution = SumInfe / sum(SumInfe),
+  Case_Contribution = SumCase / sum(SumCase),
+  Share_in_population = popByAge,
+  LowerCI_Infe = LOWERCI_Infe / sum(SumInfe),
+  UpperCI_Infe = UPPERCI_Infe / sum(SumInfe),
+  LowerCI_Case = LOWERCI_Case / sum(SumCase),
+  UpperCI_Case = UPPERCI_Case / sum(SumCase)
+)
+
+data_long <- melt(
+  data,
+  id.vars = "Category",
+  measure.vars = c("Infection_Contribution", "Case_Contribution", "Share_in_population"),
+  variable.name = "Bar_Type",
+  value.name = "Value"
+)
+
+data_long$LowerCI <- NA
+data_long$UpperCI <- NA
+
+data_long$LowerCI[data_long$Bar_Type=="Infection_Contribution"] <- data$LowerCI_Infe
+data_long$UpperCI[data_long$Bar_Type=="Infection_Contribution"] <- data$UpperCI_Infe
+
+#data_long$LowerCI[data_long$Bar_Type=="Case_Contribution"] <- data$LowerCI_Case
+#data_long$UpperCI[data_long$Bar_Type=="Case_Contribution"] <- data$UpperCI_Case
+
+pd <- position_dodge(width = 0.6)
+p <- ggplot() +
+  
+  # =========================
+# 1. Inner bars: infection & case
+# =========================
+geom_bar(
+  data = subset(data_long, Bar_Type %in% c("Infection_Contribution", "Case_Contribution")),
+  aes(x = Category, y = Value, fill = Bar_Type),
+  stat = "identity",
+  position = pd,
+  color = "black",
+  width = 0.4
+) +
+  
+  # =========================
+# 2. Error bars (CI)
+# =========================
+geom_errorbar(
+  data = subset(data_long, Bar_Type %in% c("Infection_Contribution", "Case_Contribution")),
+  aes(
+    x = Category,
+    ymin = LowerCI,
+    ymax = UpperCI,
+    group = Bar_Type
+  ),
+  position = pd,
+  width = 0.3,
+  linewidth = 0.4
+) +
+  
+  # =========================
+# 3. Outer layer: population share (on top as outline box)
+# =========================
+geom_bar(
+  data = subset(data_long, Bar_Type == "Share_in_population"),
+  aes(x = Category, y = Value, fill = Bar_Type),
+  stat = "identity",
+  color = "black",
+  linewidth = 0.4,
+  width = 0.65
+) +
+  
+  # =========================
+# Scales
+# =========================
+scale_fill_manual(
+  values = c(
+    "Infection_Contribution" = "#4DBBD5",  # muted blue
+    "Case_Contribution" = "#00A087",        # muted green
+    "Share_in_population" = NA
+  ),
+  labels = c(
+    "Infection_Contribution" = "Estimated Infections Pre-Vaccine",
+    "Case_Contribution" = "Cases Pre-Vaccine",
+    "Share_in_population" = "Population Share"
+  )
+) +
+scale_y_continuous(
+  breaks = seq(0, max(data_long$Value, na.rm = TRUE), by = 0.05)
+) + 
+  # =========================
+# Labels
+# =========================
+labs(
+  title = "Estimated Sources of SARS-CoV-2 Infections and Cases (Pre-Vaccine)",
+  x = "Age Group",
+  y = "Percentage of Population (%)",
+  fill = NULL
+) +
+  
+  # =========================
+# Theme (publication style)
+# =========================
+theme_classic(base_size = 12) +
+  
+  theme(
+    plot.title = element_text(size = 13),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 11),
+    
+    legend.position = "bottom",
+    legend.title = element_text(size = 11),
+    legend.text = element_text(size = 10),
+    
+    legend.box = "horizontal",
+    legend.key.size = unit(0.5, "cm")
+  )
+p
